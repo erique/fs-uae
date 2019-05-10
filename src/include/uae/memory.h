@@ -272,6 +272,10 @@ extern addrbank extendedkickmem_bank;
 extern addrbank extendedkickmem2_bank;
 extern addrbank custmem1_bank;
 extern addrbank custmem2_bank;
+extern addrbank romboardmem0_bank;
+extern addrbank romboardmem1_bank;
+extern addrbank romboardmem2_bank;
+extern addrbank romboardmem3_bank;
 
 extern void rtarea_init (void);
 extern void rtarea_init_mem (void);

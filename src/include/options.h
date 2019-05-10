@@ -330,6 +330,20 @@ struct boardromconfig
 	int device_num;
 	struct romconfig roms[MAX_BOARD_ROMS];
 };
+struct boardloadfile
+{
+	uae_u32 loadoffset;
+	uae_u32 fileoffset, filesize;
+	TCHAR loadfile[MAX_DPATH];
+};
+#define MAX_ROM_BOARDS 4
+struct romboard
+{
+	uae_u32 size;
+	uae_u32 start_address;
+	uae_u32 end_address;
+	struct boardloadfile lf;
+};
 
 #define Z3MAPPING_AUTO 0
 #define Z3MAPPING_UAE 1
@@ -574,6 +588,8 @@ struct uae_prefs {
 	bool address_space_24;
 	bool picasso96_nocustom;
 	int picasso96_modeflags;
+
+	struct romboard romboards[MAX_ROM_BOARDS];
 
 	uae_u32 z3autoconfig_start;
 	uae_u32 z3fastmem_size, z3fastmem2_size;

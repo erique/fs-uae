@@ -1242,6 +1242,65 @@ static void cfgfile_write_board_rom(struct zfile *f, struct multipath *mp, struc
 	}
 }
 
+static bool cfgfile_readromboard(const TCHAR *option, const TCHAR *value, struct romboard *rbp)
+{
+	TCHAR tmp1[MAX_DPATH];
+	int v;
+	for (int i = 0; i < MAX_ROM_BOARDS; i++) {
+		struct romboard *rb = &rbp[i];
+		if (i > 0)
+			_stprintf(tmp1, _T("romboard%d_options"), i + 1);
+		else
+			_tcscpy(tmp1, _T("romboard_options"));
+		if (!_tcsicmp(option, tmp1)) {
+			TCHAR *endptr;
+			TCHAR *s, *s1, *s2;
+			if (s1 = cfgfile_option_get(value, _T("start")))
+				s1 = _tcsdup(s1);
+			if (s2 = cfgfile_option_get(value, _T("end")))
+				s2 = _tcsdup(s2);
+			rb->size = 0;
+			if (s1 && s2) {
+				rb->start_address = _tcstol(s1, &endptr, 16);
+				rb->end_address = _tcstol(s2, &endptr, 16);
+				if (rb->end_address && rb->end_address > rb->start_address) {
+					rb->size = (rb->end_address - rb->start_address + 65535) & ~65535;
+				}
+			}
+			xfree(s1);
+			xfree(s2);
+			s1 = cfgfile_option_get(value, _T("file"));
+			if (s1) {
+				s1 = _tcsdup(s1);
+				TCHAR *p = cfgfile_unescape(s1, NULL);
+				_tcscpy(rb->lf.loadfile, p);
+				xfree(p);
+			}
+			xfree(s1);
+			s1 = cfgfile_option_get(value, _T("offset"));
+			if (s1) {
+				s1 = _tcsdup(s1);
+				rb->lf.loadoffset = _tcstol(s1, &endptr, 16);
+			}
+			xfree(s1);
+			s1 = cfgfile_option_get(value, _T("fileoffset"));
+			if (s1) {
+				s1 = _tcsdup(s1);
+				rb->lf.fileoffset = _tcstol(s1, &endptr, 16);
+			}
+			xfree(s1);
+			s1 = cfgfile_option_get(value, _T("filesize"));
+			if (s1) {
+				s1 = _tcsdup(s1);
+				rb->lf.filesize = _tcstol(s1, &endptr, 16);
+			}
+			xfree(s1);
+			return true;
+		}
+	}
+	return false;
+}
+
 void cfgfile_save_options (struct zfile *f, struct uae_prefs *p, int type)
 {
 	struct strlist *sl;
@@ -4407,6 +4466,10 @@ static int cfgfile_parse_hardware (struct uae_prefs *p, const TCHAR *option, TCH
 		|| cfgfile_yesno (option, value, _T("toccata_mixer"), &p->sound_toccata_mixer)
 		|| cfgfile_yesno (option, value, _T("uaeserial"), &p->uaeserial))
 		return 1;
+
+	if (cfgfile_readromboard(option, value, &p->romboards[0])) {
+		return 1;
+	}
 
 #ifdef FSUAE // NL
 	if (!g_fs_uae_jit_compiler) {

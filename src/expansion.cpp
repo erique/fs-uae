@@ -841,6 +841,56 @@ static addrbank *expamem_init_cd32fmv (int devnum)
 
 /* ********************************************************** */
 
+MEMORY_FUNCTIONS(romboardmem0);
+MEMORY_FUNCTIONS(romboardmem1);
+MEMORY_FUNCTIONS(romboardmem2);
+MEMORY_FUNCTIONS(romboardmem3);
+
+static void REGPARAM2 empty_put(uaecptr addr, uae_u32 v)
+{
+}
+
+addrbank romboardmem0_bank =
+{
+	romboardmem0_lget, romboardmem0_wget, romboardmem0_bget,
+	empty_put, empty_put, empty_put,
+	romboardmem0_xlate, romboardmem0_check, NULL, _T("*"), _T("ROM board"),
+	romboardmem0_lget, romboardmem0_wget,
+	ABFLAG_ROM | ABFLAG_THREADSAFE, 0, 0
+};
+addrbank romboardmem1_bank =
+{
+	romboardmem1_lget, romboardmem1_wget, romboardmem1_bget,
+	empty_put, empty_put, empty_put,
+	romboardmem1_xlate, romboardmem1_check, NULL, _T("*"), _T("ROM board"),
+	romboardmem1_lget, romboardmem1_wget,
+	ABFLAG_ROM | ABFLAG_THREADSAFE, 0, 0
+};
+addrbank romboardmem2_bank =
+{
+	romboardmem2_lget, romboardmem2_wget, romboardmem2_bget,
+	empty_put, empty_put, empty_put,
+	romboardmem2_xlate, romboardmem2_check, NULL, _T("*"), _T("ROM board"),
+	romboardmem2_lget, romboardmem2_wget,
+	ABFLAG_ROM | ABFLAG_THREADSAFE, 0, 0
+};
+addrbank romboardmem3_bank =
+{
+	romboardmem3_lget, romboardmem3_wget, romboardmem3_bget,
+	empty_put, empty_put, empty_put,
+	romboardmem3_xlate, romboardmem3_check, NULL, _T("*"), _T("ROM board"),
+	romboardmem3_lget, romboardmem3_wget,
+	ABFLAG_ROM | ABFLAG_THREADSAFE, 0, 0
+};
+
+static addrbank* romboardmem_bank[MAX_ROM_BOARDS] =
+{
+	&romboardmem0_bank,
+	&romboardmem1_bank,
+	&romboardmem2_bank,
+	&romboardmem3_bank,
+};
+
 /*
 *  Fast Memory
 */
@@ -1267,6 +1317,31 @@ static addrbank* expamem_init_uaeboard(int devnum)
 	uaeboard_io_state = 0;
 
 	return NULL;
+}
+
+static void loadboardfile(addrbank *ab, struct boardloadfile *lf)
+{
+	if (!ab->baseaddr)
+		return;
+	if (!lf->loadfile[0])
+		return;
+	struct zfile *zf = zfile_fopen(lf->loadfile, _T("rb"));
+	if (zf) {
+		int size = lf->filesize;
+		if (!size) {
+			size = ab->allocated;
+		}
+		else if (lf->loadoffset + size > ab->allocated)
+			size = ab->allocated - lf->loadoffset;
+		if (size > 0) {
+			int total = zfile_fread(ab->baseaddr + lf->loadoffset, 1, size, zf);
+			write_log(_T("Expansion file '%s': load %u bytes, offset %u, start addr %08x\n"),
+				lf->loadfile, total, lf->loadoffset, ab->start + lf->loadoffset);
+		}
+		zfile_fclose(zf);
+	} else {
+		write_log(_T("Couldn't open expansion file '%s'\n"), lf->loadfile);
+	}
 }
 
 /*
@@ -1799,6 +1874,23 @@ static void allocate_expamem (void)
 	currprefs.rtgmem_type = changed_prefs.rtgmem_type;
 	currprefs.z3chipmem_size = changed_prefs.z3chipmem_size;
 
+	for (int i = 0; i < MAX_ROM_BOARDS; i++) {
+		struct romboard *rb = &currprefs.romboards[i];
+		memcpy(rb, &changed_prefs.romboards[i], sizeof(struct romboard));
+		if (romboardmem_bank[i]->allocated != rb->size) {
+			mapped_free(romboardmem_bank[i]);
+			romboardmem_bank[i]->allocated = rb->size;
+			romboardmem_bank[i]->mask = romboardmem_bank[i]->allocated - 1;
+			romboardmem_bank[i]->start = rb->start_address;
+			if (romboardmem_bank[i]->allocated && romboardmem_bank[i]->start != 0xffffffff) {
+				mapped_malloc(romboardmem_bank[i]);
+				if (romboardmem_bank[i]->baseaddr == 0) {
+					write_log(_T("Out of memory for romboard card.\n"));
+				}
+			}
+		}
+	}
+
 	z3chipmem_bank.start = Z3BASE_UAE;
 	z3fastmem_bank.start = currprefs.z3autoconfig_start;
 	if (currprefs.mbresmem_high_size >= 128 * 1024 * 1024)
@@ -2315,6 +2407,14 @@ void expamem_reset (void)
 
 	add_cpu_expansions(BOARD_NONAUTOCONFIG_AFTER_Z3);
 	add_expansions(BOARD_NONAUTOCONFIG_AFTER_Z3);
+
+	for (int i = 0; i < MAX_ROM_BOARDS; i++) {
+		struct romboard *rb = &currprefs.romboards[i];
+		if (rb->size) {
+			loadboardfile(romboardmem_bank[i], &rb->lf);
+			map_banks(romboardmem_bank[i], rb->start_address >> 16, rb->size >> 16, 0);
+		}
+	}
 
 	expamem_z3_pointer = 0;
 	expamem_z3_sum = 0;
