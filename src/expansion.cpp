@@ -2200,7 +2200,7 @@ void expamem_reset (void)
 	/* check if Kickstart version is below 1.3 */
 	if (ks12orolder() && do_mount) {
 		/* warn user */
-#if KS12_BOOT_HACK
+#if KS12_BOOT_HACK && defined(FILESYS)
 		do_mount = -1;
 		if (ks11orolder()) {
 			filesys_start = 0xe90000;

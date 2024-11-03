@@ -4050,7 +4050,7 @@ empty_fs:
 		str = cfgfile_subst_path_load (UNEXPANDED, &p->path_hardfile, uci.rootdir, false);
 		_tcscpy (uci.rootdir, str);
 	}
-#ifdef FILESYS
+#if defined(FILEHDF) || defined(FILESYS)
 	add_filesys_config (p, nr, &uci);
 #endif
 	xfree (str);

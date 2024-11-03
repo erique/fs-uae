@@ -267,7 +267,7 @@ void reset_all_systems (void)
 #ifdef WITH_PCI
 	pci_reset();
 #endif
-#ifdef FILESYS
+#if defined(FILEHDF) || defined(FILESYS)
 	filesys_prepare_reset ();
 	filesys_reset ();
 #endif
@@ -405,6 +405,9 @@ void virtualdevice_init (void)
 	filesys_install ();
 #endif
 #if defined (BSDSOCKET)
+	#if !defined(FILESYS)
+		#error BSDSOCKET requires FILESYS
+	#endif
 	bsdlib_install ();
 #endif
 #ifdef WITH_UAENATIVE

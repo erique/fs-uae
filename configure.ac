@@ -705,8 +705,10 @@ OPT_FEATURE([DRIVESOUND], [drivesound], [drivesound],
             [drive sound emulation])
 OPT_FEATURE([FDI2RAW], [fdi2raw], [fdi2raw],
             [FDI 1.0 and 2.x image support])
-REQ_FEATURE([FILESYS], [filesys], [filesys],
+OPT_FEATURE([FILESYS], [filesys], [filesys],
             [directory hard drives])
+OPT_FEATURE([FILEHDF], [filehdf], [filehdf],
+            [image hard drives])
 REQ_FEATURE([FPUEMU], [fpuemu], [fpuemu],
             [FPU emulation])
 DIS_FEATURE([FSE_DRIVERS], [drivers], [drivers],

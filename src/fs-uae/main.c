@@ -943,9 +943,11 @@ extern int inputdevice_logging;
 
 static void configure_logging(const char *logstr)
 {
+#ifdef BSDSOCKET
     if (fs_config_get_int(OPTION_LOG_BSDSOCKET) == 1) {
         log_bsd = 1;
     }
+#endif
 
     if (!logstr) {
         fs_log("configure logging: none\n");

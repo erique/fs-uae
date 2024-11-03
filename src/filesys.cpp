@@ -8501,6 +8501,7 @@ void filesys_hsync() {
 #endif // UAE_FILESYS_THREADS
 #endif // FSUAE
 
+#ifdef FILESYS
 void filesys_install (void)
 {
 	uaecptr loop;
@@ -8588,6 +8589,7 @@ void filesys_install (void)
 
 	org (loop);
 }
+#endif
 
 void filesys_install_code (void)
 {
