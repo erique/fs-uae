@@ -29,6 +29,7 @@
 #include "idecontrollers.h"
 #include "disk.h"
 #include "cia.h"
+#include "a314.h"
 #include "inputdevice.h"
 #include "picasso96.h"
 #include "blkdev.h"
@@ -299,6 +300,7 @@ void do_leave_program (void)
 	graphics_leave ();
 	inputdevice_close ();
 	DISK_free ();
+	a314_cleanup ();
 	close_sound ();
 	dump_counts ();
 #ifdef PARALLEL_PORT

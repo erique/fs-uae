@@ -1860,6 +1860,7 @@ void cfgfile_save_options (struct zfile *f, struct uae_prefs *p, int type)
 	cfgfile_dwrite (f, _T("fatgary"), _T("%d"), p->cs_fatgaryrev);
 	cfgfile_dwrite (f, _T("ramsey"), _T("%d"), p->cs_ramseyrev);
 	cfgfile_dwrite_bool (f, _T("pcmcia"), p->cs_pcmcia);
+	cfgfile_dwrite_bool (f, _T("a314_emulation"), p->a314_emulation);
 	cfgfile_dwrite_bool (f, _T("scsi_cdtv"), p->cs_cdtvscsi);
 	cfgfile_dwrite_bool (f, _T("scsi_a3000"), p->cs_mbdmac == 1);
 	cfgfile_dwrite_bool (f, _T("scsi_a4000t"), p->cs_mbdmac == 2);
@@ -4418,6 +4419,7 @@ static int cfgfile_parse_hardware (struct uae_prefs *p, const TCHAR *option, TCH
 		|| cfgfile_yesno (option, value, _T("cdtvram"), &p->cs_cdtvram)
 		|| cfgfile_yesno (option, value, _T("a1000ram"), &p->cs_a1000ram)
 		|| cfgfile_yesno (option, value, _T("pcmcia"), &p->cs_pcmcia)
+		|| cfgfile_yesno (option, value, _T("a314_emulation"), &p->a314_emulation)
 		|| cfgfile_yesno (option, value, _T("scsi_cdtv"), &p->cs_cdtvscsi)
 		|| cfgfile_yesno (option, value, _T("cia_overlay"), &p->cs_ciaoverlay)
 		|| cfgfile_yesno (option, value, _T("bogomem_fast"), &p->cs_slowmemisfast)
@@ -6320,6 +6322,7 @@ void default_prefs (struct uae_prefs *p, int type)
 	p->cs_cdtvcd = p->cs_cdtvram = false;
 	p->cs_cdtvcard = 0;
 	p->cs_pcmcia = 0;
+	p->a314_emulation = false;
 	p->cs_ksmirror_e0 = 1;
 	p->cs_ksmirror_a8 = 0;
 	p->cs_ciaoverlay = 1;
@@ -6591,6 +6594,7 @@ static void buildin_default_prefs (struct uae_prefs *p)
 	p->cs_cdtvcd = p->cs_cdtvram = p->cs_cdtvcard = false;
 	p->cs_ide = 0;
 	p->cs_pcmcia = 0;
+	p->a314_emulation = false;
 	p->cs_ksmirror_e0 = 1;
 	p->cs_ksmirror_a8 = 0;
 	p->cs_ciaoverlay = 1;

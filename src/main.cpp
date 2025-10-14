@@ -22,6 +22,7 @@
 #include "newcpu.h"
 #include "disk.h"
 #include "debug.h"
+#include "a314.h"
 #include "xwin.h"
 #include "inputdevice.h"
 #include "keybuf.h"
@@ -1173,6 +1174,7 @@ static int real_main2 (int argc, TCHAR **argv)
 	serial_init ();
 #endif
 	DISK_init ();
+	a314_init ();
 #ifdef WITH_PPC
 	uae_ppc_reset(true);
 #endif

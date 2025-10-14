@@ -540,6 +540,8 @@ struct uae_prefs {
 	bool cs_bytecustomwritebug;
 	int cs_hacks;
 
+	bool a314_emulation;
+
 	struct boardromconfig expansionboard[MAX_EXPANSION_BOARDS];
 
 	TCHAR romfile[MAX_DPATH];

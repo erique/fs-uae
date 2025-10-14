@@ -39,6 +39,7 @@
 #include "sampler.h"
 #include "dongle.h"
 #include "inputrecord.h"
+#include "a314.h"
 #include "autoconf.h"
 #include "uae/ppc.h"
 #include "rommgr.h"
@@ -2222,6 +2223,10 @@ static uae_u32 REGPARAM2 clock_bget (uaecptr addr)
 		return cdtv_battram_read (addr);
 #endif
 
+	// a314-cp emulation at 0xd80001 - 0xd8000d (odd addr)
+	if (a314_is_enabled() && (addr & 0xffff) <= 0x0D && (addr & 1) == 1)
+		return a314_bget(addr);
+
 	addr &= 0x3f;
 	if ((addr & 3) == 2 || (addr & 3) == 0 || currprefs.cs_rtc == 0) {
 		return dummy_get_safe(addr, 1, false, v);
@@ -2274,6 +2279,11 @@ static void REGPARAM2 clock_bput (uaecptr addr, uae_u32 value)
 		return;
 	}
 #endif
+
+	// a314-cp emulation at 0xd80001 - 0xd8000d (odd addr)
+	if (a314_is_enabled() && (addr & 0xffff) <= 0x0D && (addr & 1) == 1) {
+		return a314_bput(addr, value);
+	}
 
 	addr &= 0x3f;
 	if ((addr & 1) != 1 || currprefs.cs_rtc == 0)

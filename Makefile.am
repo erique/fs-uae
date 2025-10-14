@@ -183,6 +183,8 @@ fs_uae_LDADD += libuae.a
 libuae_a_SOURCES = \
 	src/a2065.cpp \
 	src/a2091.cpp \
+	src/a314.cpp \
+	src/a314d_emu.cpp \
 	src/akiko.cpp \
 	src/amax.cpp \
 	src/ar.cpp \
@@ -328,6 +330,7 @@ libuae_a_SOURCES = \
 	src/identify.cpp \
 	src/include/a2065.h \
 	src/include/a2091.h \
+	src/include/a314.h \
 	src/include/akiko.h \
 	src/include/amax.h \
 	src/include/ar.h \
