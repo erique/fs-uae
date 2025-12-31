@@ -1482,6 +1482,10 @@ void cfgfile_save_options (struct zfile *f, struct uae_prefs *p, int type)
 	cfgfile_write_bool (f, _T("sound_cdaudio"), p->sound_cdaudio);
 	cfgfile_write_bool (f, _T("sound_stereo_swap_paula"), p->sound_stereo_swap_paula);
 	cfgfile_write_bool (f, _T("sound_stereo_swap_ahi"), p->sound_stereo_swap_ahi);
+	if (p->sound_paula_capture_file[0])
+		cfgfile_write_str (f, _T("sound_paula_capture_file"), p->sound_paula_capture_file);
+	if (p->sound_paula_capture_channels_file[0])
+		cfgfile_write_str (f, _T("sound_paula_capture_channels_file"), p->sound_paula_capture_channels_file);
 	cfgfile_dwrite (f, _T("sampler_frequency"), _T("%d"), p->sampler_freq);
 	cfgfile_dwrite (f, _T("sampler_buffer"), _T("%d"), p->sampler_buffer);
 	cfgfile_dwrite_bool (f, _T("sampler_stereo"), p->sampler_stereo);
@@ -2672,6 +2676,8 @@ static int cfgfile_parse_host (struct uae_prefs *p, TCHAR *option, TCHAR *value)
 		|| cfgfile_yesno(option, value, _T("sound_cdaudio"), &p->sound_cdaudio)
 		|| cfgfile_yesno(option, value, _T("sound_stereo_swap_paula"), &p->sound_stereo_swap_paula)
 		|| cfgfile_yesno(option, value, _T("sound_stereo_swap_ahi"), &p->sound_stereo_swap_ahi)
+		|| cfgfile_string(option, value, _T("sound_paula_capture_file"), p->sound_paula_capture_file, sizeof p->sound_paula_capture_file / sizeof (TCHAR))
+		|| cfgfile_string(option, value, _T("sound_paula_capture_channels_file"), p->sound_paula_capture_channels_file, sizeof p->sound_paula_capture_channels_file / sizeof (TCHAR))
 		|| cfgfile_yesno(option, value, _T("log_illegal_mem"), &p->illegal_mem)
 		|| cfgfile_yesno(option, value, _T("filesys_no_fsdb"), &p->filesys_no_uaefsdb)
 		|| cfgfile_yesno(option, value, _T("gfx_blacker_than_black"), &p->gfx_blackerthanblack)
@@ -6231,6 +6237,8 @@ void default_prefs (struct uae_prefs *p, int type)
 	p->sound_filter_type = 0;
 	p->sound_auto = 1;
 	p->sound_cdaudio = false;
+	p->sound_paula_capture_file[0] = 0;
+	p->sound_paula_capture_channels_file[0] = 0;
 	p->sampler_stereo = false;
 	p->sampler_buffer = 0;
 	p->sampler_freq = 0;

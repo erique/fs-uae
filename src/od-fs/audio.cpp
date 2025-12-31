@@ -47,6 +47,32 @@ static uae_u8 *extrasndbuf;
 static int extrasndbufsize;
 static int extrasndbuffered;
 
+static FILE *paula_capture_file = NULL;
+static FILE *paula_capture_channels_file = NULL;
+
+/* Capture individual PAULA channels (called from audio.cpp) */
+void capture_paula_channels(int ch0, int ch1, int ch2, int ch3)
+{
+	if (paula_capture_channels_file) {
+		static int debug_counter = 0;
+		/* Write 4 channels as interleaved 16-bit signed samples */
+		int16_t samples[4];
+		samples[0] = (int16_t)ch0;
+		samples[1] = (int16_t)ch1;
+		samples[2] = (int16_t)ch2;
+		samples[3] = (int16_t)ch3;
+
+		/* Debug: log first few calls to verify function is being called */
+		if (debug_counter < 5) {
+			write_log("capture_paula_channels: ch0=%d ch1=%d ch2=%d ch3=%d\n", ch0, ch1, ch2, ch3);
+			debug_counter++;
+		}
+
+		fwrite(samples, sizeof(int16_t), 4, paula_capture_channels_file);
+		fflush(paula_capture_channels_file);
+	}
+}
+
 int amiga_set_audio_callback(audio_callback func)
 {
     g_audio_callback = func;
@@ -197,7 +223,20 @@ static void send_sound (struct sound_data *sd, uae_u16 *sndbuffer)
 void finish_sound_buffer (void)
 {
 	static unsigned long tframe;
+	static int debug_finish_counter = 0;
 	int bufsize = (uae_u8*)paula_sndbufpt - (uae_u8*)paula_sndbuffer;
+
+	/* Debug: log first call */
+	if (debug_finish_counter == 0) {
+		write_log("finish_sound_buffer: CALLED (bufsize=%d)\n", bufsize);
+	}
+	debug_finish_counter++;
+
+	/* Capture raw PAULA samples if enabled */
+	if (paula_capture_file && bufsize > 0) {
+		fwrite(paula_sndbuffer, 1, bufsize, paula_capture_file);
+        fflush(paula_capture_file);
+	}
 
 	if (currprefs.turbo_emulation) {
 		paula_sndbufpt = paula_sndbuffer;
@@ -276,6 +315,26 @@ static int open_sound (void)
     }
     config_changed = 1;
 
+    /* Open PAULA capture file if specified */
+    if (currprefs.sound_paula_capture_file[0]) {
+        paula_capture_file = fopen(currprefs.sound_paula_capture_file, "wb");
+        if (paula_capture_file) {
+            write_log("PAULA raw audio capture enabled: %s\n", currprefs.sound_paula_capture_file);
+        } else {
+            write_log("ERROR: Failed to open PAULA capture file: %s\n", currprefs.sound_paula_capture_file);
+        }
+    }
+
+    /* Open PAULA multi-channel capture file if specified */
+    if (currprefs.sound_paula_capture_channels_file[0]) {
+        paula_capture_channels_file = fopen(currprefs.sound_paula_capture_channels_file, "wb");
+        if (paula_capture_channels_file) {
+            write_log("PAULA 4-channel raw capture enabled: %s\n", currprefs.sound_paula_capture_channels_file);
+        } else {
+            write_log("ERROR: Failed to open PAULA channels capture file: %s\n", currprefs.sound_paula_capture_channels_file);
+        }
+    }
+
     clearbuffer();
 
     currprefs.sound_stereo = 1;
@@ -284,6 +343,9 @@ static int open_sound (void)
 
     //init_sound_table16 ();
     sample_handler = currprefs.sound_stereo ? sample16s_handler : sample16_handler;
+    write_log("open_sound: sample_handler set to %s (sound_stereo=%d, sound_interpol=%d)\n",
+              currprefs.sound_stereo ? "sample16s_handler" : "sample16_handler",
+              currprefs.sound_stereo, currprefs.sound_interpol);
 
     //obtainedfreq = currprefs.sound_freq;
     obtainedfreq = sdp->obtainedfreq;
@@ -306,6 +368,20 @@ void close_sound (void)
     gui_data.sndbuf_status = 3;
     if (!have_sound)
         return;
+
+    /* Close PAULA capture file if open */
+    if (paula_capture_file) {
+        fclose(paula_capture_file);
+        paula_capture_file = NULL;
+        write_log("PAULA raw audio capture closed\n");
+    }
+
+    /* Close PAULA multi-channel capture file if open */
+    if (paula_capture_channels_file) {
+        fclose(paula_capture_channels_file);
+        paula_capture_channels_file = NULL;
+        write_log("PAULA 4-channel raw capture closed\n");
+    }
 
     // SDL_PauseAudio (1);
     clearbuffer();

@@ -399,6 +399,8 @@ struct uae_prefs {
 	bool sound_stereo_swap_ahi;
 	bool sound_auto;
 	bool sound_cdaudio;
+	TCHAR sound_paula_capture_file[MAX_DPATH];
+	TCHAR sound_paula_capture_channels_file[MAX_DPATH];
 
 	int sampler_freq;
 	int sampler_buffer;

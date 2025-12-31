@@ -318,6 +318,9 @@ typedef uae_s8 sample8_t;
 #define DO_CHANNEL_1(v, c) do { (v) *= audio_channel[c].vol; } while (0)
 #define SBASEVAL16(logn) ((logn) == 1 ? SOUND16_BASE_VAL >> 1 : SOUND16_BASE_VAL)
 
+/* Forward declaration for multi-channel capture */
+extern void capture_paula_channels(int ch0, int ch1, int ch2, int ch3);
+
 STATIC_INLINE int FINISH_DATA (int data, int bits, int ch)
 {
 	if (bits == 16) {
@@ -1001,6 +1004,12 @@ static void sample16si_sinc_handler (void)
 
 void sample16s_handler (void)
 {
+	static int debug_sample_counter = 0;
+	if (debug_sample_counter == 0) {
+		write_log("sample16s_handler: CALLED (this message will only show once)\n");
+	}
+	debug_sample_counter++;
+
 	int data0 = audio_channel[0].current_sample;
 	int data1 = audio_channel[1].current_sample;
 	int data2 = audio_channel[2].current_sample;
@@ -1009,6 +1018,9 @@ void sample16s_handler (void)
 	DO_CHANNEL_1 (data1, 1);
 	DO_CHANNEL_1 (data2, 2);
 	DO_CHANNEL_1 (data3, 3);
+
+	/* Capture individual channels after volume but before mixing */
+	capture_paula_channels(data0, data1, data2, data3);
 
 	data0 &= audio_channel[0].adk_mask;
 	data1 &= audio_channel[1].adk_mask;
@@ -1834,6 +1846,7 @@ void set_audio (void)
 			: currprefs.sound_interpol == 4 ? sample16si_crux_handler
 			: currprefs.sound_interpol == 2 ? sample16si_sinc_handler
 			: sample16si_anti_handler);
+		write_log("audio: sample_handler selected for stereo (interpol=%d)\n", currprefs.sound_interpol);
 	} else if (sample_handler == sample16ss_handler
 		|| sample_handler == sample16ss_sinc_handler
 		|| sample_handler == sample16ss_anti_handler)
