@@ -345,7 +345,7 @@ static std::string tool_debugger_run()
 static std::string tool_screenshot()
 {
     if (!g_renderdata.pixels)
-        return "{\"error\":\"no framebuffer available\"}";
+        throw std::runtime_error("no framebuffer available");
 
     int width = g_renderdata.limit_w;
     int height = g_renderdata.limit_h;
@@ -355,25 +355,25 @@ static std::string tool_screenshot()
     int stride = g_renderdata.width * bpp;
 
     if (width <= 0 || height <= 0)
-        return "{\"error\":\"invalid dimensions\"}";
+        throw std::runtime_error("invalid dimensions");
 
     // Create PNG in memory
     PngBuffer pngBuf;
     png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
     if (!png)
-        return "{\"error\":\"png_create_write_struct failed\"}";
+        throw std::runtime_error("png_create_write_struct failed");
 
     png_infop info = png_create_info_struct(png);
     if (!info)
     {
         png_destroy_write_struct(&png, NULL);
-        return "{\"error\":\"png_create_info_struct failed\"}";
+        throw std::runtime_error("png_create_info_struct failed");
     }
 
     if (setjmp(png_jmpbuf(png)))
     {
         png_destroy_write_struct(&png, &info);
-        return "{\"error\":\"PNG encoding error\"}";
+        throw std::runtime_error("PNG encoding error");
     }
 
     png_set_write_fn(png, &pngBuf, png_write_to_buffer, png_flush_buffer);
@@ -419,12 +419,7 @@ static std::string tool_screenshot()
     png_write_end(png, NULL);
     png_destroy_write_struct(&png, &info);
 
-    std::string b64 = base64_encode(pngBuf.data.data(), pngBuf.data.size());
-
-    return "{\"width\":" + std::to_string(width) +
-           ",\"height\":" + std::to_string(height) +
-           ",\"format\":\"png\"" +
-           ",\"data\":\"" + b64 + "\"}";
+    return base64_encode(pngBuf.data.data(), pngBuf.data.size());
 }
 
 static std::string tool_memory_search(const std::string& params)
@@ -512,7 +507,10 @@ static std::string handle_tools_call(const std::string& id, const std::string& t
         else if (toolName == "debugger_run")
             result = tool_debugger_run();
         else if (toolName == "screenshot")
-            result = tool_screenshot();
+        {
+            std::string b64 = tool_screenshot();
+            return jsonrpc_result(id, "{\"content\":[{\"type\":\"image\",\"data\":\"" + b64 + "\",\"mimeType\":\"image/png\"}]}");
+        }
         else if (toolName == "memory_search")
             result = tool_memory_search(args);
         else
