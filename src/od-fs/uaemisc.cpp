@@ -28,6 +28,10 @@ int _daylight;
 int pause_emulation = 0;
 int uaelib_debug = 0;
 
+// Forward declarations for console output buffer
+static char *console_buffer;
+static int console_buffer_size;
+
 int sleep_resolution = 1000 / 1;
 int pissoff_value = 15000 * CYCLE_UNIT;
 
@@ -84,7 +88,17 @@ void sleep_millis (int ms) {
 void console_out_f(const TCHAR *fmt, ...) {
     va_list arg_ptr;
     va_start(arg_ptr, fmt);
-    vprintf(fmt, arg_ptr);
+    if (console_buffer && console_buffer_size > 1)
+    {
+        int len = strlen(console_buffer);
+        int remaining = console_buffer_size - len - 1;
+        if (remaining > 0)
+            vsnprintf(console_buffer + len, remaining, fmt, arg_ptr);
+    }
+    else
+    {
+        vprintf(fmt, arg_ptr);
+    }
     va_end(arg_ptr);
 }
 
@@ -101,7 +115,17 @@ void f_out(void *f, const TCHAR *format, ...)
 }
 
 void console_out (const TCHAR *msg) {
-    printf("%s", msg);
+    if (console_buffer && console_buffer_size > 1)
+    {
+        int len = strlen(console_buffer);
+        int remaining = console_buffer_size - len - 1;
+        if (remaining > 0)
+            strncat(console_buffer + len, msg, remaining);
+    }
+    else
+    {
+        printf("%s", msg);
+    }
 }
 
 int console_get_gui (TCHAR *out, int maxlen) {
@@ -182,9 +206,6 @@ int target_get_volume_name (struct uaedev_mount_info *mtinf,
     STUB("");
     return 0;
 }
-
-static char *console_buffer;
-static int console_buffer_size;
 
 char *setconsolemode (char *buffer, int maxlen) {
     char *ret = NULL;

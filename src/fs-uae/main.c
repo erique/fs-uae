@@ -43,6 +43,8 @@
 #include "../../gamemode/lib/gamemode_client.h"
 #endif
 
+#include "mcp_server.h"
+
 static int fs_uae_argc;
 static char **fs_uae_argv;
 static int g_warn_about_missing_config_file;
@@ -1421,7 +1423,20 @@ int main(int argc, char *argv[])
         }
     }
 
+    // Start MCP server if configured
+    const char *mcp_endpoint = fs_config_get_const_string("mcp");
+    if (mcp_endpoint) {
+        fs_log("Starting MCP server on %s\n", mcp_endpoint);
+        mcp_start(mcp_endpoint);
+    }
+
     fs_emu_run(main_function);
+
+    // Stop MCP server
+    if (mcp_endpoint) {
+        mcp_stop();
+    }
+
     fs_log("fs-uae shutting down, fs_emu_run returned\n");
     if (g_rmdir(fs_uae_state_dir()) == 0) {
         fs_log("state dir %s was removed because it was empty\n",

@@ -151,7 +151,9 @@ fs_uae_SOURCES = \
 	src/fs-uae/recording.c \
 	src/fs-uae/recording.h \
 	src/fs-uae/uae_config.c \
-	src/fs-uae/video.c
+	src/fs-uae/video.c \
+	src/mcp_server.cpp \
+	src/mcp_server.h
 
 
 if WINDOWS
