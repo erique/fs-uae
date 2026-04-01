@@ -7,30 +7,49 @@ screenshots, disassemble code, and drive the debugger.
 
 ## Enabling the MCP server
 
-Add the `mcp` option to your FS-UAE config file, specifying a Unix socket path
-or TCP endpoint:
+Add the `mcp` option to your FS-UAE config file, specifying a TCP endpoint
+or Unix socket path:
 
 ```
-# Unix socket (recommended)
-mcp = /tmp/fs-uae-mcp.sock
-
-# TCP on localhost
-mcp = tcp:6789
+# TCP on localhost (recommended, default port 8372)
+mcp = tcp:8372
 
 # TCP on all interfaces
-mcp = tcp:0.0.0.0:6789
+mcp = tcp:0.0.0.0:8372
+
+# Unix socket
+mcp = /tmp/fs-uae-mcp.sock
 ```
 
 The server starts when FS-UAE launches and stops when it exits.
 
 ## Connecting Claude Code
 
-Claude Code speaks MCP over stdio, so a small bridge script is needed to
-relay between stdio and the FS-UAE socket. The bridge is included at
+Claude Code speaks MCP over stdio, so a bridge script is needed to relay
+between stdio and the FS-UAE server. The bridge is included at
 `scripts/mcp/mcp_bridge.py`.
+
+The bridge handles the MCP protocol itself (initialize, tools/list) so that
+Claude Code always sees a healthy MCP server, even when FS-UAE isn't running.
+When FS-UAE connects or disconnects, the bridge sends a `tools/list_changed`
+notification so Claude Code refreshes the tool list automatically.
 
 Add the following to your Claude Code config (`~/.claude.json`, under
 `mcpServers`):
+
+```json
+"fs-uae": {
+    "type": "stdio",
+    "command": "python3",
+    "args": [
+        "/path/to/fs-uae/scripts/mcp/mcp_bridge.py",
+        "tcp:8372"
+    ],
+    "env": {}
+}
+```
+
+For Unix sockets, use the socket path as the second argument:
 
 ```json
 "fs-uae": {
@@ -43,12 +62,6 @@ Add the following to your Claude Code config (`~/.claude.json`, under
     "env": {}
 }
 ```
-
-Adjust the path to `mcp_bridge.py` and the socket/endpoint to match your
-config. For TCP, use e.g. `"tcp:6789"` as the second argument.
-
-The bridge is resilient: it waits for FS-UAE to appear and reconnects
-automatically if FS-UAE restarts.
 
 ## Available tools
 
