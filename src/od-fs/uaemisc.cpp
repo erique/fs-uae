@@ -1,6 +1,8 @@
 #include "sysconfig.h"
 #include "sysdeps.h"
 
+#include <sys/select.h>
+
 #include "autoconf.h"
 #include "fsdb.h"
 #include "options.h"
@@ -10,6 +12,7 @@
 #include "xwin.h"
 #include "uae/fs.h"
 #include "../od-win32/debug_win32.h"
+#include "mcp_server.h"
 
 #ifndef PICASSO96
 // just to make ncr_scsi compile. it will not work, of course,
@@ -134,12 +137,38 @@ int console_get_gui (TCHAR *out, int maxlen) {
 }
 
 int console_get(TCHAR *in, int maxlen) {
-    TCHAR *res = fgets(in, maxlen, stdin);
-    if (res == NULL) {
-        return -1;
+    // Check for MCP-injected commands first (non-blocking)
+    if (mcp_console_get(in, maxlen))
+    {
+        int len = strlen(in);
+        return len;
     }
-    int len = strlen(in);
-    return len - 1;
+
+    // Poll stdin with timeout so we can check for MCP commands periodically
+    for (;;)
+    {
+        fd_set fds;
+        struct timeval tv;
+        FD_ZERO(&fds);
+        FD_SET(STDIN_FILENO, &fds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000; // 100ms
+        int ret = select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv);
+        if (ret > 0)
+        {
+            TCHAR *res = fgets(in, maxlen, stdin);
+            if (res == NULL)
+                return -1;
+            int len = strlen(in);
+            return len - 1;
+        }
+        // Check for MCP commands on timeout
+        if (mcp_console_get(in, maxlen))
+        {
+            int len = strlen(in);
+            return len;
+        }
+    }
 }
 
 void console_flush(void) {

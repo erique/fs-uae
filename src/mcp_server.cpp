@@ -33,6 +33,8 @@
 #include <mutex>
 #include <atomic>
 
+#include <condition_variable>
+
 #include <png.h>
 
 // external video state
@@ -203,6 +205,59 @@ static std::string g_socketPath;
 enum class TransportType { UNIX_SOCKET, TCP };
 static TransportType g_transport;
 
+// MCP debugger command injection queue.
+// MCP tools push commands here; console_get() picks them up on the CPU thread.
+static std::mutex g_cmdMutex;
+static std::string g_pendingCmd;
+static bool g_cmdReady = false;
+
+// Debugger break notification.
+// When the CPU enters the debugger, it signals this so MCP tools can wait
+// for a step/breakpoint to complete and return the resulting state.
+static std::mutex g_breakMutex;
+static std::condition_variable g_breakCv;
+static bool g_breakOccurred = false;
+
+static void inject_debugger_cmd(const std::string& cmd)
+{
+    std::lock_guard<std::mutex> lock(g_cmdMutex);
+    g_pendingCmd = cmd;
+    g_cmdReady = true;
+}
+
+static bool wait_for_break(int timeoutMs)
+{
+    std::unique_lock<std::mutex> lock(g_breakMutex);
+    g_breakOccurred = false;
+    return g_breakCv.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+        [] { return g_breakOccurred; });
+}
+
+static std::string build_cpu_state_json()
+{
+    std::string json = "{";
+    for (int i = 0; i < 8; i++)
+    {
+        if (i > 0) json += ",";
+        json += "\"D" + std::to_string(i) + "\":\"" + to_hex(m68k_dreg(regs, i), 8) + "\"";
+    }
+    for (int i = 0; i < 8; i++)
+        json += ",\"A" + std::to_string(i) + "\":\"" + to_hex(m68k_areg(regs, i), 8) + "\"";
+    json += ",\"PC\":\"" + to_hex(m68k_getpc(), 8) + "\"";
+    json += ",\"SR\":\"" + to_hex(regs.sr, 4) + "\"";
+
+    // disassemble a few instructions at PC
+    char disasmBuf[4096];
+    memset(disasmBuf, 0, sizeof(disasmBuf));
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "d %x 5", (unsigned int)m68k_getpc());
+    debug_parser(cmd, disasmBuf, sizeof(disasmBuf) - 1);
+    json += ",\"disassembly\":\"" + json_escape(disasmBuf) + "\"";
+
+    json += "}";
+    return json;
+}
+
 // Tool implementations
 static std::string tool_machine_info()
 {
@@ -332,14 +387,26 @@ static std::string tool_debug_command(const std::string& params)
 
 static std::string tool_debugger_break()
 {
+    // Prepare to wait for the break
+    {
+        std::lock_guard<std::mutex> lock(g_breakMutex);
+        g_breakOccurred = false;
+    }
+
     activate_debugger();
+
+    // Wait for the CPU thread to actually enter the debugger
+    if (wait_for_break(5000))
+        return build_cpu_state_json();
+
     return "{\"status\":\"break requested\"}";
 }
 
 static std::string tool_debugger_run()
 {
-    deactivate_debugger();
-    return "{\"status\":\"run requested\"}";
+    // Inject 'g' command so the CPU thread exits debug_1() properly
+    inject_debugger_cmd("g");
+    return "{\"status\":\"running\"}";
 }
 
 static std::string tool_screenshot()
@@ -484,6 +551,221 @@ static std::string tool_memory_search(const std::string& params)
     return json;
 }
 
+static std::string tool_step(const std::string& params)
+{
+    int64_t count = json_get_int(params, "count", 1);
+    if (count <= 0) count = 1;
+    if (count > 10000) count = 10000;
+
+    bool overSubroutine = json_has_key(params, "over") &&
+        json_get_string(params, "over") != "false";
+
+    // Prepare the break notification before injecting the command
+    {
+        std::lock_guard<std::mutex> lock(g_breakMutex);
+        g_breakOccurred = false;
+    }
+
+    if (overSubroutine)
+    {
+        // 'z' = step over (run to next instruction, skipping subroutines)
+        inject_debugger_cmd("z");
+    }
+    else
+    {
+        // 't N' = single step N instructions
+        inject_debugger_cmd("t " + std::to_string(count));
+    }
+
+    // Wait for the CPU to break again (step completed)
+    if (wait_for_break(5000))
+        return build_cpu_state_json();
+
+    return "{\"error\":\"step timed out\"}";
+}
+
+static std::string tool_breakpoint_set(const std::string& params)
+{
+    int64_t addr = json_get_int(params, "address");
+
+    // Find a free slot
+    for (int i = 0; i < BREAKPOINT_TOTAL; i++)
+    {
+        if (!bpnodes[i].enabled)
+        {
+            bpnodes[i].addr = (uaecptr)addr;
+            bpnodes[i].enabled = 1;
+            return "{\"index\":" + std::to_string(i) +
+                ",\"address\":\"" + to_hex((uint32_t)addr, 8) + "\"}";
+        }
+    }
+    return "{\"error\":\"no free breakpoint slots\"}";
+}
+
+static std::string tool_breakpoint_list()
+{
+    std::string json = "{\"breakpoints\":[";
+    int count = 0;
+    for (int i = 0; i < BREAKPOINT_TOTAL; i++)
+    {
+        if (!bpnodes[i].enabled)
+            continue;
+        if (count > 0) json += ",";
+        json += "{\"index\":" + std::to_string(i) +
+            ",\"address\":\"" + to_hex((uint32_t)bpnodes[i].addr, 8) + "\"}";
+        count++;
+    }
+    json += "],\"count\":" + std::to_string(count) + "}";
+    return json;
+}
+
+static std::string tool_breakpoint_remove(const std::string& params)
+{
+    if (json_has_key(params, "index"))
+    {
+        int idx = (int)json_get_int(params, "index");
+        if (idx < 0 || idx >= BREAKPOINT_TOTAL)
+            return "{\"error\":\"invalid index\"}";
+        bpnodes[idx].enabled = 0;
+        return "{\"removed\":" + std::to_string(idx) + "}";
+    }
+
+    if (json_has_key(params, "address"))
+    {
+        int64_t addr = json_get_int(params, "address");
+        for (int i = 0; i < BREAKPOINT_TOTAL; i++)
+        {
+            if (bpnodes[i].enabled && bpnodes[i].addr == (uaecptr)addr)
+            {
+                bpnodes[i].enabled = 0;
+                return "{\"removed\":" + std::to_string(i) +
+                    ",\"address\":\"" + to_hex((uint32_t)addr, 8) + "\"}";
+            }
+        }
+        return "{\"error\":\"no breakpoint at that address\"}";
+    }
+
+    // Remove all
+    for (int i = 0; i < BREAKPOINT_TOTAL; i++)
+        bpnodes[i].enabled = 0;
+    return "{\"removed\":\"all\"}";
+}
+
+static std::string tool_watchpoint_set(const std::string& params)
+{
+    int64_t addr = json_get_int(params, "address");
+    int64_t size = json_get_int(params, "size", 1);
+    std::string mode = json_get_string(params, "mode");
+
+    int rwi = 0;
+    if (mode.empty() || mode == "rw" || mode == "RW")
+        rwi = 3;
+    else
+    {
+        for (char c : mode)
+        {
+            if (c == 'r' || c == 'R') rwi |= 1;
+            if (c == 'w' || c == 'W') rwi |= 2;
+        }
+    }
+    if (rwi == 0) rwi = 3;
+
+    // Enable memwatch if not already active
+    if (!memwatch_enabled)
+    {
+        char cmd[] = "w";
+        char outbuf[256];
+        memset(outbuf, 0, sizeof(outbuf));
+        debug_parser(cmd, outbuf, sizeof(outbuf) - 1);
+    }
+
+    // Find a free slot
+    for (int i = 0; i < MEMWATCH_TOTAL; i++)
+    {
+        if (mwnodes[i].size == 0)
+        {
+            memset(&mwnodes[i], 0, sizeof(struct memwatch_node));
+            mwnodes[i].addr = (uaecptr)addr;
+            mwnodes[i].size = (int)size;
+            mwnodes[i].rwi = rwi;
+            mwnodes[i].access_mask = MW_MASK_CPU_D_R | MW_MASK_CPU_D_W | MW_MASK_CPU_I;
+            mwnodes[i].val_mask = 0xffffffff;
+            mwnodes[i].reg = 0xffffffff;
+
+            // Re-setup memwatch hooks
+            char setupCmd[64];
+            snprintf(setupCmd, sizeof(setupCmd), "w %d %x %x %s",
+                i, (unsigned int)addr, (unsigned int)size,
+                (rwi == 1) ? "R" : (rwi == 2) ? "W" : "RW");
+            char outbuf[256];
+            memset(outbuf, 0, sizeof(outbuf));
+            debug_parser(setupCmd, outbuf, sizeof(outbuf) - 1);
+
+            std::string modeStr;
+            if (rwi & 1) modeStr += "R";
+            if (rwi & 2) modeStr += "W";
+            return "{\"index\":" + std::to_string(i) +
+                ",\"address\":\"" + to_hex((uint32_t)addr, 8) +
+                "\",\"size\":" + std::to_string(size) +
+                ",\"mode\":\"" + modeStr + "\"}";
+        }
+    }
+    return "{\"error\":\"no free watchpoint slots\"}";
+}
+
+static std::string tool_watchpoint_list()
+{
+    std::string json = "{\"watchpoints\":[";
+    int count = 0;
+    for (int i = 0; i < MEMWATCH_TOTAL; i++)
+    {
+        if (mwnodes[i].size == 0)
+            continue;
+        if (count > 0) json += ",";
+        std::string modeStr;
+        if (mwnodes[i].rwi & 1) modeStr += "R";
+        if (mwnodes[i].rwi & 2) modeStr += "W";
+        json += "{\"index\":" + std::to_string(i) +
+            ",\"address\":\"" + to_hex((uint32_t)mwnodes[i].addr, 8) +
+            "\",\"size\":" + std::to_string(mwnodes[i].size) +
+            ",\"mode\":\"" + modeStr + "\"}";
+        count++;
+    }
+    json += "],\"count\":" + std::to_string(count) + "}";
+    return json;
+}
+
+static std::string tool_watchpoint_remove(const std::string& params)
+{
+    if (json_has_key(params, "index"))
+    {
+        int idx = (int)json_get_int(params, "index");
+        if (idx < 0 || idx >= MEMWATCH_TOTAL)
+            return "{\"error\":\"invalid index\"}";
+
+        char cmd[16];
+        snprintf(cmd, sizeof(cmd), "w %d", idx);
+        char outbuf[256];
+        memset(outbuf, 0, sizeof(outbuf));
+        debug_parser(cmd, outbuf, sizeof(outbuf) - 1);
+
+        return "{\"removed\":" + std::to_string(idx) + "}";
+    }
+
+    // Remove all
+    for (int i = 0; i < MEMWATCH_TOTAL; i++)
+    {
+        if (mwnodes[i].size == 0)
+            continue;
+        char cmd[16];
+        snprintf(cmd, sizeof(cmd), "w %d", i);
+        char outbuf[256];
+        memset(outbuf, 0, sizeof(outbuf));
+        debug_parser(cmd, outbuf, sizeof(outbuf) - 1);
+    }
+    return "{\"removed\":\"all\"}";
+}
+
 // Tool dispatch
 static std::string handle_tools_call(const std::string& id, const std::string& toolName, const std::string& args)
 {
@@ -513,6 +795,20 @@ static std::string handle_tools_call(const std::string& id, const std::string& t
         }
         else if (toolName == "memory_search")
             result = tool_memory_search(args);
+        else if (toolName == "step")
+            result = tool_step(args);
+        else if (toolName == "breakpoint_set")
+            result = tool_breakpoint_set(args);
+        else if (toolName == "breakpoint_list")
+            result = tool_breakpoint_list();
+        else if (toolName == "breakpoint_remove")
+            result = tool_breakpoint_remove(args);
+        else if (toolName == "watchpoint_set")
+            result = tool_watchpoint_set(args);
+        else if (toolName == "watchpoint_list")
+            result = tool_watchpoint_list();
+        else if (toolName == "watchpoint_remove")
+            result = tool_watchpoint_remove(args);
         else
             return jsonrpc_error(id, -32602, "Unknown tool: " + toolName);
 
@@ -586,13 +882,62 @@ static std::string handle_tools_list(const std::string& id)
             "},"
             "{"
                 "\"name\":\"debugger_break\","
-                "\"description\":\"Break execution (pause the emulated Amiga)\","
+                "\"description\":\"Break execution (pause the emulated Amiga). Returns CPU state with registers, PC, and disassembly.\","
                 "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}"
             "},"
             "{"
                 "\"name\":\"debugger_run\","
                 "\"description\":\"Resume execution (continue running)\","
                 "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}"
+            "},"
+            "{"
+                "\"name\":\"step\","
+                "\"description\":\"Single-step the 68k CPU. Executes one or more instructions and returns the resulting CPU state with registers, PC, and disassembly. The CPU must be in break mode first (use debugger_break).\","
+                "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
+                    "\"count\":{\"type\":\"integer\",\"description\":\"Number of instructions to step (default 1)\"},"
+                    "\"over\":{\"type\":\"boolean\",\"description\":\"Step over subroutine calls (like 'next' in gdb). Default false.\"}"
+                "}}"
+            "},"
+            "{"
+                "\"name\":\"breakpoint_set\","
+                "\"description\":\"Set an instruction breakpoint at an address. The CPU will break when it reaches this address.\","
+                "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
+                    "\"address\":{\"type\":\"integer\",\"description\":\"Address to break at\"}"
+                "},\"required\":[\"address\"]}"
+            "},"
+            "{"
+                "\"name\":\"breakpoint_list\","
+                "\"description\":\"List all active instruction breakpoints.\","
+                "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}"
+            "},"
+            "{"
+                "\"name\":\"breakpoint_remove\","
+                "\"description\":\"Remove a breakpoint by index, address, or remove all.\","
+                "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
+                    "\"index\":{\"type\":\"integer\",\"description\":\"Breakpoint index to remove\"},"
+                    "\"address\":{\"type\":\"integer\",\"description\":\"Remove breakpoint at this address\"}"
+                "}}"
+            "},"
+            "{"
+                "\"name\":\"watchpoint_set\","
+                "\"description\":\"Set a memory watchpoint. The CPU will break when the specified memory region is accessed.\","
+                "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
+                    "\"address\":{\"type\":\"integer\",\"description\":\"Memory address to watch\"},"
+                    "\"size\":{\"type\":\"integer\",\"description\":\"Size of watched region in bytes (default 1)\"},"
+                    "\"mode\":{\"type\":\"string\",\"description\":\"Access mode: R (read), W (write), RW (both). Default RW.\"}"
+                "},\"required\":[\"address\"]}"
+            "},"
+            "{"
+                "\"name\":\"watchpoint_list\","
+                "\"description\":\"List all active memory watchpoints.\","
+                "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}"
+            "},"
+            "{"
+                "\"name\":\"watchpoint_remove\","
+                "\"description\":\"Remove a watchpoint by index, or remove all.\","
+                "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
+                    "\"index\":{\"type\":\"integer\",\"description\":\"Watchpoint index to remove\"}"
+                "}}"
             "},"
             "{"
                 "\"name\":\"screenshot\","
@@ -913,4 +1258,27 @@ extern "C" void mcp_stop(void)
 
     if (g_transport == TransportType::UNIX_SOCKET && !g_socketPath.empty())
         ::unlink(g_socketPath.c_str());
+}
+
+extern "C" int mcp_console_get(char* buf, int maxlen)
+{
+    std::lock_guard<std::mutex> lock(g_cmdMutex);
+    if (!g_cmdReady)
+        return 0;
+
+    strncpy(buf, g_pendingCmd.c_str(), maxlen - 1);
+    buf[maxlen - 1] = '\0';
+    g_pendingCmd.clear();
+    g_cmdReady = false;
+    return 1;
+}
+
+extern "C" void mcp_debugger_notify(void)
+{
+    // Signal any MCP tool waiting for a break (step, breakpoint hit, etc)
+    {
+        std::lock_guard<std::mutex> lock(g_breakMutex);
+        g_breakOccurred = true;
+    }
+    g_breakCv.notify_all();
 }

@@ -21,6 +21,7 @@
 #include "newcpu.h"
 #include "cpu_prefetch.h"
 #include "debug.h"
+#include "mcp_server.h"
 #include "cia.h"
 #include "xwin.h"
 #include "identify.h"
@@ -5438,6 +5439,7 @@ void debug (void)
 		savestate_init ();
 	}
 #endif
+	mcp_debugger_notify ();
 	debug_1 ();
 #ifdef SAVESTATE
 	if (!debug_rewind && !currprefs.cachesize
