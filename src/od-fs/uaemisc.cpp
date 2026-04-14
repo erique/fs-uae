@@ -144,25 +144,52 @@ int console_get(TCHAR *in, int maxlen) {
         return len;
     }
 
-    // Poll stdin with timeout so we can check for MCP commands periodically
+    // Decide once whether stdin is usable as a real interactive source.
+    // When FS-UAE is launched detached (stdin = /dev/null), select() returns
+    // immediately-readable and fgets() returns NULL every time; that would
+    // make debug_1() exit on first call and leave the CPU in a half-broken
+    // state (debugging=1 but not actually stopped). In that case ignore stdin
+    // and only poll the MCP command queue.
+    static int stdin_checked = 0;
+    static int stdin_usable = 0;
+    if (!stdin_checked)
+    {
+        stdin_usable = isatty(STDIN_FILENO);
+        stdin_checked = 1;
+    }
+
     for (;;)
     {
-        fd_set fds;
-        struct timeval tv;
-        FD_ZERO(&fds);
-        FD_SET(STDIN_FILENO, &fds);
-        tv.tv_sec = 0;
-        tv.tv_usec = 100000; // 100ms
-        int ret = select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv);
-        if (ret > 0)
+        if (stdin_usable)
         {
-            TCHAR *res = fgets(in, maxlen, stdin);
-            if (res == NULL)
-                return -1;
-            int len = strlen(in);
-            return len - 1;
+            fd_set fds;
+            struct timeval tv;
+            FD_ZERO(&fds);
+            FD_SET(STDIN_FILENO, &fds);
+            tv.tv_sec = 0;
+            tv.tv_usec = 100000; // 100ms
+            int ret = select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv);
+            if (ret > 0)
+            {
+                TCHAR *res = fgets(in, maxlen, stdin);
+                if (res == NULL)
+                {
+                    // stdin closed — stop polling it forever
+                    stdin_usable = 0;
+                }
+                else
+                {
+                    int len = strlen(in);
+                    return len - 1;
+                }
+            }
         }
-        // Check for MCP commands on timeout
+        else
+        {
+            usleep(100000); // 100ms
+        }
+
+        // Check for MCP commands
         if (mcp_console_get(in, maxlen))
         {
             int len = strlen(in);

@@ -233,6 +233,19 @@ static bool wait_for_break(int timeoutMs)
         [] { return g_breakOccurred; });
 }
 
+// Most debugger tools touch emulator state (memory, debug_parser, bpnodes)
+// that is only safe to access when the CPU thread is stopped in debug_1().
+// Calling these concurrently with a running CPU races with event2 scheduling
+// and other shared state, which shows up as "out of event2's!" and worse.
+// Gate such tools behind this check; the caller must call debugger_break first.
+static bool cpu_is_stopped()
+{
+    return debugging != 0;
+}
+
+static const char* NOT_STOPPED_ERROR =
+    "{\"error\":\"CPU is running; call debugger_break first\"}";
+
 static std::string build_cpu_state_json()
 {
     std::string json = "{";
@@ -273,6 +286,7 @@ static std::string tool_machine_info()
 
 static std::string tool_cpu_registers()
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     std::string json = "{";
     for (int i = 0; i < 8; i++)
     {
@@ -295,6 +309,7 @@ static std::string tool_cpu_registers()
 
 static std::string tool_memory_read(const std::string& params)
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     int64_t addr = json_get_int(params, "address");
     int64_t length = json_get_int(params, "length", 256);
     if (length > 65536) length = 65536;
@@ -328,6 +343,7 @@ static std::string tool_memory_read(const std::string& params)
 
 static std::string tool_memory_write(const std::string& params)
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     int64_t addr = json_get_int(params, "address");
     std::string data = json_get_string(params, "data");
 
@@ -356,6 +372,7 @@ static std::string tool_memory_write(const std::string& params)
 
 static std::string tool_disassemble(const std::string& params)
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     int64_t addr = json_get_int(params, "address");
     int64_t count = json_get_int(params, "count", 10);
     if (count <= 0) count = 1;
@@ -374,6 +391,7 @@ static std::string tool_disassemble(const std::string& params)
 
 static std::string tool_debug_command(const std::string& params)
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     std::string cmd = json_get_string(params, "command");
     if (cmd.empty())
         return "{\"error\":\"missing command parameter\"}";
@@ -387,6 +405,10 @@ static std::string tool_debug_command(const std::string& params)
 
 static std::string tool_debugger_break()
 {
+    // Already stopped — just report state without waiting for a new break
+    if (cpu_is_stopped())
+        return build_cpu_state_json();
+
     // Prepare to wait for the break
     {
         std::lock_guard<std::mutex> lock(g_breakMutex);
@@ -404,6 +426,7 @@ static std::string tool_debugger_break()
 
 static std::string tool_debugger_run()
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     // Inject 'g' command so the CPU thread exits debug_1() properly
     inject_debugger_cmd("g");
     return "{\"status\":\"running\"}";
@@ -491,6 +514,7 @@ static std::string tool_screenshot()
 
 static std::string tool_memory_search(const std::string& params)
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     int64_t startAddr = json_get_int(params, "start", 0);
     int64_t endAddr = json_get_int(params, "end", 0x1000000);
     std::string pattern = json_get_string(params, "pattern");
@@ -553,6 +577,7 @@ static std::string tool_memory_search(const std::string& params)
 
 static std::string tool_step(const std::string& params)
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     int64_t count = json_get_int(params, "count", 1);
     if (count <= 0) count = 1;
     if (count > 10000) count = 10000;
@@ -586,6 +611,7 @@ static std::string tool_step(const std::string& params)
 
 static std::string tool_breakpoint_set(const std::string& params)
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     int64_t addr = json_get_int(params, "address");
 
     // Find a free slot
@@ -604,6 +630,7 @@ static std::string tool_breakpoint_set(const std::string& params)
 
 static std::string tool_breakpoint_list()
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     std::string json = "{\"breakpoints\":[";
     int count = 0;
     for (int i = 0; i < BREAKPOINT_TOTAL; i++)
@@ -621,6 +648,7 @@ static std::string tool_breakpoint_list()
 
 static std::string tool_breakpoint_remove(const std::string& params)
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     if (json_has_key(params, "index"))
     {
         int idx = (int)json_get_int(params, "index");
@@ -653,6 +681,7 @@ static std::string tool_breakpoint_remove(const std::string& params)
 
 static std::string tool_watchpoint_set(const std::string& params)
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     int64_t addr = json_get_int(params, "address");
     int64_t size = json_get_int(params, "size", 1);
     std::string mode = json_get_string(params, "mode");
@@ -715,6 +744,7 @@ static std::string tool_watchpoint_set(const std::string& params)
 
 static std::string tool_watchpoint_list()
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     std::string json = "{\"watchpoints\":[";
     int count = 0;
     for (int i = 0; i < MEMWATCH_TOTAL; i++)
@@ -737,6 +767,7 @@ static std::string tool_watchpoint_list()
 
 static std::string tool_watchpoint_remove(const std::string& params)
 {
+    if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
     if (json_has_key(params, "index"))
     {
         int idx = (int)json_get_int(params, "index");
