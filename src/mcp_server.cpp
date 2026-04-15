@@ -16,6 +16,7 @@
 #include "custom.h"
 #include "newcpu.h"
 #include "debug.h"
+#include "ar.h"
 #include "mcp_server.h"
 
 #include <sys/socket.h>
@@ -271,6 +272,32 @@ static std::string build_cpu_state_json()
     return json;
 }
 
+// Peek a byte without triggering side-effect reads on custom/CIA registers.
+// get_byte_debug() ultimately calls the bank's bget() which, for I/O banks,
+// has visible side effects (register strobes, FIFO pops, mode changes).
+// Those side effects race with the frontend thread that's still rendering
+// from custom-chip state even while the CPU is stopped. Restrict MCP reads
+// to RAM/ROM/SAFE banks; for custom registers, use the ar_custom shadow;
+// everything else returns 0xff.
+static uae_u8 safe_peek_byte(uaecptr addr)
+{
+    addrbank *ad = &get_mem_bank(addr);
+    if (!ad)
+        return 0xff;
+    // Only read via direct baseaddr pointer. Calling bget() on I/O banks can
+    // trigger register strobes, and some "RAM" banks (e.g. accelerator SCSI
+    // expansion windows) have bget implementations that dereference optional
+    // hardware state pointers that may be NULL in this config.
+    if (ad->check && ad->check(addr, 1) && ad->xlateaddr)
+    {
+        uae_u8 *p = ad->xlateaddr(addr);
+        if (p) return *p;
+    }
+    if (ad == &custom_bank)
+        return ar_custom[addr & 0x1ff];
+    return 0xff;
+}
+
 // Tool implementations
 static std::string tool_machine_info()
 {
@@ -319,7 +346,7 @@ static std::string tool_memory_read(const std::string& params)
     hex.reserve(length * 2);
     for (int64_t i = 0; i < length; i++)
     {
-        uae_u8 val = get_byte_debug((uaecptr)(addr + i));
+        uae_u8 val = safe_peek_byte((uaecptr)(addr + i));
         char buf[4];
         snprintf(buf, sizeof(buf), "%02x", val);
         hex += buf;
@@ -333,7 +360,7 @@ static std::string tool_memory_read(const std::string& params)
     std::string ascii;
     for (int64_t i = 0; i < length; i++)
     {
-        uae_u8 val = get_byte_debug((uaecptr)(addr + i));
+        uae_u8 val = safe_peek_byte((uaecptr)(addr + i));
         ascii += (val >= 0x20 && val < 0x7f) ? (char)val : '.';
     }
     json += ",\"ascii\":\"" + json_escape(ascii) + "\"";
@@ -557,7 +584,7 @@ static std::string tool_memory_search(const std::string& params)
         bool match = true;
         for (size_t j = 0; j < searchBytes.size(); j++)
         {
-            if (get_byte_debug((uaecptr)(addr + j)) != searchBytes[j])
+            if (safe_peek_byte((uaecptr)(addr + j)) != searchBytes[j])
             {
                 match = false;
                 break;
