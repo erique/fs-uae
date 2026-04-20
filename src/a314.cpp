@@ -17,7 +17,7 @@
 
 #include <string.h>
 
-#define write_log_verbose(...) do { /*write_log(__VA_ARGS__)*/ } while(0)
+#define write_log_verbose(...) do { } while(0)
 
 #define CLOCKPORT_ADDR          0xd80001
 #define SHMEM_SIZE              0x10000

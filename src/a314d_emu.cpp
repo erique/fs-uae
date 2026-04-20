@@ -129,6 +129,7 @@ void a314d_emu_init(uae_u8 *shmem, int shmem_size)
 
 	const char *config_paths[] =
 	{
+		"/etc/opt/a314/a314d.conf",
 		"a314d.conf",
 		"a314/a314d.conf",
 		NULL
@@ -140,8 +141,13 @@ void a314d_emu_init(uae_u8 *shmem, int shmem_size)
 		if (test)
 		{
 			fclose(test);
+			logger_info("Loading config from '%s'\n", config_paths[i]);
 			load_config_file(config_paths[i]);
 			break;
+		}
+		else
+		{
+			logger_warning("Failed to open '%s'\n", config_paths[i]);
 		}
 	}
 
