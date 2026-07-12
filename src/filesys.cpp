@@ -62,6 +62,7 @@
 #include "scsi.h"
 #include "uaenative.h"
 #include "tabletlibrary.h"
+#include "uaeusb.h"
 #include "cia.h"
 #include "picasso96.h"
 #include "cpuboard.h"
@@ -7180,6 +7181,9 @@ static uae_u32 REGPARAM2 filesys_diagentry (TrapContext *context)
 #endif
 #ifdef WITH_TABLETLIBRARY
 	resaddr = tabletlib_startup (resaddr);
+#endif
+#ifdef WITH_LIBUSB
+	resaddr = UaeusbStartup (resaddr);
 #endif
 
 	/* scan for Residents and return pointer to array of them */

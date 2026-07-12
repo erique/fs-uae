@@ -52,6 +52,7 @@
 #include "uaeexe.h"
 #include "uaenative.h"
 #include "tabletlibrary.h"
+#include "uaeusb.h"
 #include "luascript.h"
 #include "driveclick.h"
 #include "pci.h"
@@ -276,6 +277,9 @@ void reset_all_systems (void)
 #if defined (BSDSOCKET)
 	bsdlib_reset ();
 #endif
+#ifdef WITH_LIBUSB
+	UaeusbReset ();
+#endif
 #ifdef FILESYS
 	filesys_start_threads ();
 	hardfile_reset ();
@@ -412,6 +416,9 @@ void virtualdevice_init (void)
 #endif
 #ifdef WITH_TABLETLIBRARY
 	tabletlib_install ();
+#endif
+#ifdef WITH_LIBUSB
+	UaeusbInstall ();
 #endif
 #ifdef NCR
 	ncr_init();

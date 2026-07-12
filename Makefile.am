@@ -8,6 +8,7 @@ CM_CFLAGS =
 CM_CFLAGS += @FREETYPE_CFLAGS@
 CM_CFLAGS += @GLEW_CFLAGS@
 CM_CFLAGS += @GLIB_CFLAGS@
+CM_CFLAGS += @LIBUSB_CFLAGS@
 CM_CFLAGS += @LUA_CFLAGS@
 CM_CFLAGS += @MIR_CFLAGS@
 CM_CFLAGS += @OPENAL_CFLAGS@
@@ -53,6 +54,7 @@ LIBS += @FREETYPE_LIBS@
 LIBS += @GLEW_LIBS@
 LIBS += @GLIB_LIBS@
 LIBS += @IOKIT_LIBS@
+LIBS += @LIBUSB_LIBS@
 # LIBS += @MIR_LIBS@
 LIBS += @OPENAL_LIBS@
 LIBS += @OPENGL_LIBS@
@@ -462,6 +464,7 @@ libuae_a_SOURCES = \
 	src/include/uaenative.h \
 	src/include/uaeresource.h \
 	src/include/uaeserial.h \
+	src/include/uaeusb.h \
 	src/include/uni_common.h \
 	src/include/unpacked.h \
 	src/include/x86.h \
@@ -618,6 +621,7 @@ libuae_a_SOURCES = \
 	src/uaenative.cpp \
 	src/uaeresource.cpp \
 	src/uaeserial.cpp \
+	src/uaeusb.cpp \
 	src/vm.cpp \
 	src/x86.cpp \
 	src/zfile.cpp \

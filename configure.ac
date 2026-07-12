@@ -741,6 +741,19 @@ OPT_FEATURE([USE_JIT_FPU], [jit_fpu], [jit-fpu],
             [JIT compilation of FPU instructions])
 DIS_FEATURE([WITH_LUA], [lua], [lua],
             [LUA scripting (unfinished)])
+AC_ARG_ENABLE([libusb], [AS_HELP_STRING([--disable-libusb],
+    [in-emulator uaeusb.device via libusb])])
+AS_IF([test x$enable_libusb != xno], [
+    PKG_CHECK_MODULES([LIBUSB], [libusb-1.0], [
+        AC_DEFINE([WITH_LIBUSB], [1],
+            [in-emulator uaeusb.device via libusb])
+    ], [
+        enable_libusb=no
+        AC_SUBST([LIBUSB_CFLAGS])
+        AC_SUBST([LIBUSB_LIBS])
+    ])
+])
+AM_CONDITIONAL([WITH_LIBUSB], [test x$enable_libusb != xno])
 OPT_FEATURE([WITH_NETPLAY], [netplay], [netplay],
             [netplay support])
 OPT_FEATURE([NCR], [ncr], [ncr],
