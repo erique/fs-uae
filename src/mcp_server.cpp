@@ -26,6 +26,8 @@
 #include <unistd.h>
 #include <cerrno>
 #include <poll.h>
+#include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <sstream>
@@ -311,9 +313,36 @@ static std::string tool_machine_info()
     return json;
 }
 
-static std::string tool_cpu_registers()
+static std::string tool_cpu_registers(const std::string& params)
 {
     if (!cpu_is_stopped()) return NOT_STOPPED_ERROR;
+
+    // Optional single-register read: return just the named register to keep
+    // the response small when the caller only needs one value (e.g. PC).
+    std::string reg = json_get_string(params, "register");
+    if (!reg.empty())
+    {
+        for (char& c : reg) c = (char)toupper((unsigned char)c);
+        uint32_t val = 0;
+        int digits = 8;
+        bool found = true;
+        if (reg.size() == 2 && reg[0] == 'D' && reg[1] >= '0' && reg[1] <= '7')
+            val = m68k_dreg(regs, reg[1] - '0');
+        else if (reg.size() == 2 && reg[0] == 'A' && reg[1] >= '0' && reg[1] <= '7')
+            val = m68k_areg(regs, reg[1] - '0');
+        else if (reg == "PC") val = m68k_getpc();
+        else if (reg == "SR") { val = regs.sr; digits = 4; }
+        else if (reg == "USP") val = regs.usp;
+        else if (reg == "ISP") val = regs.isp;
+        else if (reg == "MSP") val = regs.msp;
+        else if (reg == "VBR") val = regs.vbr;
+        else found = false;
+
+        if (!found)
+            return "{\"error\":\"unknown register: " + json_escape(reg) + "\"}";
+        return "{\"" + reg + "\":\"" + to_hex(val, digits) + "\"}";
+    }
+
     std::string json = "{";
     for (int i = 0; i < 8; i++)
     {
@@ -342,28 +371,48 @@ static std::string tool_memory_read(const std::string& params)
     if (length > 65536) length = 65536;
     if (length <= 0) return "{\"error\":\"invalid length\"}";
 
-    std::string hex;
-    hex.reserve(length * 2);
+    // Output format: "hex", "ascii", or "both" (default). Dropping ASCII (or
+    // hex) halves the payload for callers that only need one representation.
+    std::string format = json_get_string(params, "format");
+    if (format.empty()) format = "both";
+    bool wantHex = (format == "hex" || format == "both");
+    bool wantAscii = (format == "ascii" || format == "both");
+    if (!wantHex && !wantAscii)
+        return "{\"error\":\"format must be 'hex', 'ascii', or 'both'\"}";
+
+    // Peek each byte once; build the requested representations from the copy.
+    std::vector<uae_u8> bytes((size_t)length);
     for (int64_t i = 0; i < length; i++)
-    {
-        uae_u8 val = safe_peek_byte((uaecptr)(addr + i));
-        char buf[4];
-        snprintf(buf, sizeof(buf), "%02x", val);
-        hex += buf;
-    }
+        bytes[(size_t)i] = safe_peek_byte((uaecptr)(addr + i));
 
     std::string json = "{\"address\":\"" + to_hex((uint32_t)addr, 8) + "\"";
     json += ",\"length\":" + std::to_string(length);
-    json += ",\"data\":\"" + hex + "\"";
 
-    // Also provide ASCII representation
-    std::string ascii;
-    for (int64_t i = 0; i < length; i++)
+    if (wantHex)
     {
-        uae_u8 val = safe_peek_byte((uaecptr)(addr + i));
-        ascii += (val >= 0x20 && val < 0x7f) ? (char)val : '.';
+        std::string hex;
+        hex.reserve(length * 2);
+        for (int64_t i = 0; i < length; i++)
+        {
+            char buf[4];
+            snprintf(buf, sizeof(buf), "%02x", bytes[(size_t)i]);
+            hex += buf;
+        }
+        json += ",\"data\":\"" + hex + "\"";
     }
-    json += ",\"ascii\":\"" + json_escape(ascii) + "\"";
+
+    if (wantAscii)
+    {
+        std::string ascii;
+        ascii.reserve(length);
+        for (int64_t i = 0; i < length; i++)
+        {
+            uae_u8 val = bytes[(size_t)i];
+            ascii += (val >= 0x20 && val < 0x7f) ? (char)val : '.';
+        }
+        json += ",\"ascii\":\"" + json_escape(ascii) + "\"";
+    }
+
     json += "}";
     return json;
 }
@@ -459,7 +508,8 @@ static std::string tool_debugger_run()
     return "{\"status\":\"running\"}";
 }
 
-static std::string tool_screenshot()
+// Render the current framebuffer to an in-memory PNG. Throws on failure.
+static std::string tool_screenshot(const std::string& outPath)
 {
     if (!g_renderdata.pixels)
         throw std::runtime_error("no framebuffer available");
@@ -535,6 +585,21 @@ static std::string tool_screenshot()
 
     png_write_end(png, NULL);
     png_destroy_write_struct(&png, &info);
+
+    // With a path, write the PNG to disk and return the path, keeping the image
+    // bytes out of the caller's context so a vision-capable agent can read the
+    // file. Without a path, return base64 for inline delivery.
+    if (!outPath.empty())
+    {
+        FILE* f = fopen(outPath.c_str(), "wb");
+        if (!f)
+            throw std::runtime_error("cannot open file for writing: " + outPath);
+        size_t written = fwrite(pngBuf.data.data(), 1, pngBuf.data.size(), f);
+        fclose(f);
+        if (written != pngBuf.data.size())
+            throw std::runtime_error("failed to write PNG file: " + outPath);
+        return outPath;
+    }
 
     return base64_encode(pngBuf.data.data(), pngBuf.data.size());
 }
@@ -833,7 +898,7 @@ static std::string handle_tools_call(const std::string& id, const std::string& t
         if (toolName == "machine_info")
             result = tool_machine_info();
         else if (toolName == "cpu_registers")
-            result = tool_cpu_registers();
+            result = tool_cpu_registers(args);
         else if (toolName == "memory_read")
             result = tool_memory_read(args);
         else if (toolName == "memory_write")
@@ -848,8 +913,12 @@ static std::string handle_tools_call(const std::string& id, const std::string& t
             result = tool_debugger_run();
         else if (toolName == "screenshot")
         {
-            std::string b64 = tool_screenshot();
-            return jsonrpc_result(id, "{\"content\":[{\"type\":\"image\",\"data\":\"" + b64 + "\",\"mimeType\":\"image/png\"}]}");
+            std::string path = json_get_string(args, "path");
+            std::string out = tool_screenshot(path);
+            if (!path.empty())
+                return jsonrpc_result(id, "{\"content\":[{\"type\":\"text\",\"text\":\"" +
+                    json_escape("{\"path\":\"" + out + "\"}") + "\"}]}");
+            return jsonrpc_result(id, "{\"content\":[{\"type\":\"image\",\"data\":\"" + out + "\",\"mimeType\":\"image/png\"}]}");
         }
         else if (toolName == "memory_search")
             result = tool_memory_search(args);
@@ -904,15 +973,18 @@ static std::string handle_tools_list(const std::string& id)
             "},"
             "{"
                 "\"name\":\"cpu_registers\","
-                "\"description\":\"Get 68k CPU register values (D0-D7, A0-A7, PC, SR, etc)\","
-                "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}"
+                "\"description\":\"Get 68k CPU register values. With no arguments returns all registers (D0-D7, A0-A7, PC, SR, USP, ISP, MSP, VBR). Pass 'register' to return just one value (cheaper).\","
+                "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
+                    "\"register\":{\"type\":\"string\",\"description\":\"Return only this register, e.g. PC, SR, D0-D7, A0-A7, USP, ISP, MSP, VBR. Omit for all.\"}"
+                "}}"
             "},"
             "{"
                 "\"name\":\"memory_read\","
-                "\"description\":\"Read bytes from emulated memory. Returns hex and ASCII.\","
+                "\"description\":\"Read bytes from emulated memory. Returns hex and/or ASCII depending on 'format'.\","
                 "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
                     "\"address\":{\"type\":\"integer\",\"description\":\"Start address\"},"
-                    "\"length\":{\"type\":\"integer\",\"description\":\"Number of bytes (max 65536, default 256)\"}"
+                    "\"length\":{\"type\":\"integer\",\"description\":\"Number of bytes (max 65536, default 256)\"},"
+                    "\"format\":{\"type\":\"string\",\"description\":\"Output format: 'hex', 'ascii', or 'both' (default). Use 'hex' or 'ascii' alone to halve the response size.\"}"
                 "},\"required\":[\"address\"]}"
             "},"
             "{"
@@ -999,8 +1071,10 @@ static std::string handle_tools_list(const std::string& id)
             "},"
             "{"
                 "\"name\":\"screenshot\","
-                "\"description\":\"Take a screenshot of the emulated screen. Returns base64-encoded PNG.\","
-                "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}"
+                "\"description\":\"Take a screenshot of the emulated screen. With no arguments, returns the PNG inline as base64. With 'path', writes the PNG to that file and returns the path instead of the image data - keeping the frame out of the caller's context so it can be handed to a vision-capable agent to read.\","
+                "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
+                    "\"path\":{\"type\":\"string\",\"description\":\"Write the PNG to this file path and return the path instead of inline base64.\"}"
+                "}}"
             "},"
             "{"
                 "\"name\":\"memory_search\","

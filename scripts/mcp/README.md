@@ -42,41 +42,82 @@ Add the following to your Claude Code config (`~/.claude.json`, under
     "type": "stdio",
     "command": "python3",
     "args": [
-        "/path/to/fs-uae/scripts/mcp/mcp_bridge.py",
-        "tcp:8372"
+        "/path/to/fs-uae/scripts/mcp/mcp_bridge.py"
     ],
     "env": {}
 }
 ```
 
-For Unix sockets, use the socket path as the second argument:
+With no endpoint argument the bridge derives a per-session Unix socket from its
+own PID (`/tmp/fs-uae-mcp-<pid>.sock`). This is what lets multiple concurrent
+Claude Code sessions each drive their own FS-UAE instance (see
+[Multiple concurrent agents](#multiple-concurrent-agents) below).
+
+To pin the bridge to a fixed endpoint instead, pass it as the second argument —
+a TCP endpoint or a Unix socket path:
 
 ```json
-"fs-uae": {
-    "type": "stdio",
-    "command": "python3",
-    "args": [
-        "/path/to/fs-uae/scripts/mcp/mcp_bridge.py",
-        "/tmp/fs-uae-mcp.sock"
-    ],
-    "env": {}
-}
+"args": [
+    "/path/to/fs-uae/scripts/mcp/mcp_bridge.py",
+    "tcp:8372"
+]
 ```
+
+```json
+"args": [
+    "/path/to/fs-uae/scripts/mcp/mcp_bridge.py",
+    "/tmp/fs-uae-mcp.sock"
+]
+```
+
+## Multiple concurrent agents
+
+FS-UAE emulates a single machine, so one FS-UAE process serves exactly one MCP
+client at a time. Concurrency is achieved by giving each Claude Code session its
+own bridge process **and** its own FS-UAE instance, isolated by a unique
+endpoint:
+
+1. Configure the bridge with **no endpoint argument** (as above). Each session's
+   bridge picks a distinct `/tmp/fs-uae-mcp-<pid>.sock`, so sessions never
+   collide.
+2. From the session, call the `bridge_info` tool to discover the endpoint. It
+   returns the socket path and the exact value to set for the `mcp` config key,
+   for example:
+
+   ```json
+   {
+     "transport": "unix",
+     "endpoint": "/tmp/fs-uae-mcp-12345.sock",
+     "mcp_config": "/tmp/fs-uae-mcp-12345.sock",
+     "connected": false,
+     "bridge_pid": 12345
+   }
+   ```
+
+3. Launch FS-UAE with `mcp = <endpoint>` (config file) pointed at that socket.
+   The bridge auto-connects and its tool list becomes available in that session
+   only.
+
+Because the unique endpoint is baked into each FS-UAE launch, a session can find
+and stop only its own FS-UAE (`pgrep -f fs-uae-mcp-<bridge_pid>`) without
+disturbing sibling sessions. The bridge also prints a `BRIDGE_INFO: {...}` line
+to stderr at startup for non-MCP discovery.
 
 ## Available tools
 
 | Tool | Description |
 |------|-------------|
+| `bridge_info` | Bridge endpoint, transport, connection status, and the `mcp` config value to launch FS-UAE with (served locally by the bridge) |
 | `machine_info` | Emulated Amiga info (model, CPU, memory sizes) |
-| `cpu_registers` | 68k registers (D0-D7, A0-A7, PC, SR, USP, ISP, MSP, VBR) |
-| `memory_read` | Read bytes from emulated memory (hex + ASCII) |
+| `cpu_registers` | 68k registers (D0-D7, A0-A7, PC, SR, USP, ISP, MSP, VBR); pass `register` to return a single value |
+| `memory_read` | Read bytes from emulated memory; `format` selects `hex`, `ascii`, or `both` (default) |
 | `memory_write` | Write hex bytes to emulated memory |
 | `memory_search` | Search memory for a byte pattern or text string |
 | `disassemble` | Disassemble 68k instructions at an address |
 | `debug_command` | Execute any FS-UAE debugger command |
 | `debugger_break` | Pause the emulated Amiga |
 | `debugger_run` | Resume execution |
-| `screenshot` | Capture the emulated screen as base64-encoded PNG |
+| `screenshot` | Capture the emulated screen; base64 PNG inline, or pass `path` to write a PNG file and return just the path (keeps the image out of context for a vision agent to read) |
 
 ## Building
 

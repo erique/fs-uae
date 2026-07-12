@@ -7,17 +7,42 @@ Claude Code always sees a healthy MCP server, even when FS-UAE isn't running.
 When FS-UAE connects or disconnects, the bridge sends a tools/list_changed
 notification so Claude Code refreshes the tool list automatically.
 
+The bridge exposes one locally-served tool, `bridge_info`, which reports its
+socket path and transport so clients can discover how to launch FS-UAE. Each
+Claude Code session spawns its own bridge process; with no endpoint argument
+the bridge derives a per-session Unix socket from its PID, so multiple agents
+never collide on the same endpoint. Each session then launches its own FS-UAE
+instance pointed at its bridge's endpoint.
+
 Supports both Unix domain sockets and TCP:
-  mcp_bridge.py /tmp/fs-uae-mcp.sock     Unix socket
+  mcp_bridge.py                          Unix socket at /tmp/fs-uae-mcp-<pid>.sock
+  mcp_bridge.py /tmp/fs-uae-mcp.sock     Unix socket at explicit path
   mcp_bridge.py tcp:6789                  TCP localhost
   mcp_bridge.py tcp:host:port             TCP remote
 """
 
 import json
+import os
 import socket
 import sys
 import threading
 import time
+
+
+BRIDGE_INFO_TOOL = {
+    "name": "bridge_info",
+    "description": (
+        "Returns information about the MCP bridge: its socket path / TCP endpoint, "
+        "transport, connection status to FS-UAE, and the exact `mcp` config value to "
+        "use when launching FS-UAE so it connects to this bridge's session. Call this "
+        "before starting FS-UAE to discover the correct endpoint."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    },
+}
 
 
 def parse_endpoint(endpoint):
@@ -58,14 +83,28 @@ class FSUAEBridge:
     def __init__(self, endpoint):
         self.family, self.address = parse_endpoint(endpoint)
         self.endpoint = endpoint
+        self.transport = "tcp" if endpoint.startswith("tcp:") else "unix"
         self.sock = None
         self.lock = threading.Lock()
         self.reader_thread = None
         self.monitor_thread = None
-        self.cached_tools = []
+        self.fsuae_tools = []
         self.pending = {}  # id -> threading.Event, response
         self.pending_lock = threading.Lock()
         self.was_connected = False
+
+    @property
+    def cached_tools(self):
+        return [BRIDGE_INFO_TOOL] + self.fsuae_tools
+
+    def bridge_info(self):
+        return {
+            "transport": self.transport,
+            "endpoint": self.endpoint,
+            "mcp_config": self.endpoint,
+            "connected": self.is_connected(),
+            "bridge_pid": os.getpid(),
+        }
 
     def connect(self):
         """Try to connect to FS-UAE. Returns True on success."""
@@ -177,7 +216,7 @@ class FSUAEBridge:
         resp = self.send_request("tools/list")
         if resp and "result" in resp:
             tools = resp["result"].get("tools", [])
-            self.cached_tools = tools
+            self.fsuae_tools = tools
             log(f"fetched {len(tools)} tools from FS-UAE")
             return True
         return False
@@ -202,7 +241,7 @@ class FSUAEBridge:
         """Called when FS-UAE connection is lost."""
         if self.was_connected:
             log("FS-UAE disconnected")
-            self.cached_tools = []
+            self.fsuae_tools = []
             self.was_connected = False
             # notify Claude Code that tools changed (now empty)
             send_to_client({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
@@ -222,13 +261,24 @@ class FSUAEBridge:
         self.monitor_thread.start()
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: mcp_bridge.py <endpoint>", file=sys.stderr)
-        print("  endpoint: /path/to/socket | tcp:port | tcp:host:port", file=sys.stderr)
-        sys.exit(1)
+def handle_bridge_info_call(bridge, req_id):
+    """Serve a tools/call for bridge_info locally."""
+    info = bridge.bridge_info()
+    send_to_client(jsonrpc_result(req_id, {
+        "content": [{"type": "text", "text": json.dumps(info, indent=2)}],
+    }))
 
-    bridge = FSUAEBridge(sys.argv[1])
+
+def main():
+    if len(sys.argv) > 1:
+        endpoint = sys.argv[1]
+    else:
+        endpoint = f"/tmp/fs-uae-mcp-{os.getpid()}.sock"
+
+    bridge = FSUAEBridge(endpoint)
+
+    # Structured marker for external discovery (e.g. `grep '^BRIDGE_INFO:'` in bridge stderr).
+    print(f"BRIDGE_INFO: {json.dumps(bridge.bridge_info())}", file=sys.stderr, flush=True)
 
     # try initial connection
     if bridge.connect():
@@ -268,6 +318,12 @@ def main():
         if method == "tools/list":
             send_to_client(jsonrpc_result(req_id, {"tools": bridge.cached_tools}))
             continue
+
+        if method == "tools/call":
+            tool_name = msg.get("params", {}).get("name")
+            if tool_name == "bridge_info":
+                handle_bridge_info_call(bridge, req_id)
+                continue
 
         # proxy everything else (tools/call etc) to FS-UAE
         if not bridge.is_connected():
