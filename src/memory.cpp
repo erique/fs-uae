@@ -2526,6 +2526,12 @@ void memory_reset (void)
 		map_banks (&clock_bank, 0xD8, 1, 0);	// A314: this was $DC, but should be $D8 ?!
 	else if (currprefs.cs_ksmirror_a8 || currprefs.cs_ide > 0 || currprefs.cs_pcmcia)
 		map_banks (&clock_bank, 0xDC, 1, 0); /* none clock */
+
+	// A314: the a314-cp clockport is decoded inside clock_bget/bput at 0xD80001.
+	// Force clock_bank at 0xD80000 whenever a314 emulation is enabled, so the
+	// clockport works regardless of RTC/IDE/memory (e.g. no-fastmem) config.
+	if (currprefs.a314_emulation)
+		map_banks (&clock_bank, 0xD8, 1, 0);
 	if (currprefs.cs_fatgaryrev >= 0 || currprefs.cs_ramseyrev >= 0)
 		map_banks (&mbres_bank, 0xDE, 1, 0);
 #ifdef CD32
