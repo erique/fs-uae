@@ -141,6 +141,7 @@ void devices_vsync_post(void)
 
 void devices_hsync(void)
 {
+	a314_hsync();
 #ifdef GFXBOARD
 	gfxboard_hsync_handler();
 #endif
@@ -193,6 +194,7 @@ void devices_hsync(void)
 void devices_rethink(void)
 {
 	rethink_cias ();
+	a314_rethink ();
 #ifdef A2065
 	rethink_a2065 ();
 #endif

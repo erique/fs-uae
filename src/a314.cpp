@@ -124,6 +124,40 @@ int a314_is_enabled(void)
 	return a314_state.enabled ? 1 : 0;
 }
 
+void a314_rethink(void)
+{
+	// EXTER (INT6) is a shared, level-triggered interrupt. Re-assert our
+	// request whenever the interrupt state is reconsidered, so it is not
+	// permanently lost if another EXTER source (e.g. CIA-B) clears the shared
+	// bit before the CPU takes it. Without this the a314 IRQ can be dropped on
+	// some CPU/timing configs (seen hanging comms on 68020), because
+	// a314_trigger_amiga_interrupt() only pulses INTREQ once.
+	if (!a314_state.enabled)
+		return;
+
+	if (a314_state.amiga_irq_pending)
+	{
+		const int INTB_EXTER = 13;
+		INTREQ_0(0x8000 | (1 << INTB_EXTER));
+	}
+}
+
+void a314_hsync(void)
+{
+	// Runs every scanline on the main emulation thread. Assert EXTER if the
+	// daemon thread flagged a pending interrupt (a314_trigger_amiga_interrupt).
+	// This is the thread-safe replacement for the old cross-thread INTREQ, in
+	// the same spirit as uaenet_int_requested handling in the hsync handler.
+	if (!a314_state.enabled)
+		return;
+
+	if (a314_state.amiga_irq_pending)
+	{
+		const int INTB_EXTER = 13;
+		INTREQ_0(0x8000 | (1 << INTB_EXTER));
+	}
+}
+
 uae_u32 a314_bget(uaecptr addr)
 {
 	if (!a314_state.enabled)
@@ -214,10 +248,11 @@ void a314_trigger_amiga_interrupt(void)
 	if (!a314_state.enabled)
 		return;
 
+	// This runs on the a314 daemon thread. The emulator's interrupt/event
+	// state (INTREQ, doint, the event queue) is NOT thread-safe, so we must not
+	// touch it here. Just record that the a314 wants to interrupt; the main
+	// emulation thread asserts EXTER from a314_hsync()/a314_rethink().
 	a314_state.amiga_irq_pending = true;
 
 	write_log_verbose("A314: Triggering Amiga interrupt (EXTER)\n");
-	const int INTB_EXTER = 13;
-	const int INTF_EXTER = 1 << INTB_EXTER;
-	INTREQ(0x8000 | INTF_EXTER);
 }

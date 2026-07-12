@@ -21,6 +21,8 @@ void a314_cleanup(void);
 uae_u32 a314_bget(uaecptr addr);
 void a314_bput(uaecptr addr, uae_u32 value);
 int a314_is_enabled(void);
+void a314_rethink(void);
+void a314_hsync(void);
 
 #ifdef __cplusplus
 }
