@@ -1331,10 +1331,18 @@ static void abortAsync (uaecptr request)
 {
     for (;;)
     {
+        // Hold asyncSem across the find + flag set so the slot cannot be
+        // released (worker) and recycled (addAsyncRequest) between the two:
+        // otherwise a stale store could land on a slot already reassigned to
+        // an unrelated request and abort it spuriously. Sleep outside the
+        // lock so parked workers can still take asyncSem to complete.
+        uae_sem_wait (&asyncSem);
         int slot = findAsyncSlot (request);
+        if (slot >= 0)
+            hcd.asyncAborted[slot] = 1;
+        uae_sem_post (&asyncSem);
         if (slot < 0)
             return;
-        hcd.asyncAborted[slot] = 1;
         sleep_millis (HUB_INT_POLL_SLICE_MS);
     }
 }
